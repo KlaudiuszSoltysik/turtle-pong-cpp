@@ -7,10 +7,6 @@ def generate_launch_description():
             package='turtlesim',
             executable='turtlesim_node',
             name='turtlesim'),
-        # launch_ros.actions.Node(
-        #     package='game',
-        #     executable='move',
-        #     name='move'),
         launch_ros.actions.Node(
             package='game',
             executable='game',

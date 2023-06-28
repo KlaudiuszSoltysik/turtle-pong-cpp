@@ -24,11 +24,14 @@ install(DIRECTORY
 )
 
 add_executable(game src/game.cpp)
+add_executable(move src/move_player_turtle.cpp)
 
 ament_target_dependencies(game rclcpp interfaces turtlesim geometry_msgs)
+ament_target_dependencies(move rclcpp interfaces)
 
 install(TARGETS
   game
+  move
   DESTINATION lib/${PROJECT_NAME})
 
 ament_package()

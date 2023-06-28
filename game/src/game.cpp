@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <cmath>
 
 #include "rclcpp/rclcpp.hpp"
 #include "turtlesim/msg/pose.hpp"
@@ -7,8 +8,6 @@
 #include "turtlesim/srv/teleport_absolute.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "interfaces/msg/move.hpp"
-
-using namespace std::chrono_literals;
 
 
 class Game : public rclcpp::Node {
@@ -21,7 +20,7 @@ class Game : public rclcpp::Node {
       // CONNECT WITH SPAWN SERVICE
       spawn_cli = this->create_client<turtlesim::srv::Spawn>("spawn");
 
-      while (!spawn_cli->wait_for_service(1s)) {
+      while(!spawn_cli->wait_for_service(std::chrono::seconds(1))) {
         RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "service not available, waiting again...");
       }
 
@@ -32,19 +31,19 @@ class Game : public rclcpp::Node {
       // CONNECT WITH SET_PEN SERVICES
       set_pen_ball_cli = this->create_client<turtlesim::srv::SetPen>("turtle1/set_pen");
 
-      while (!set_pen_ball_cli->wait_for_service(1s)) {
+      while(!set_pen_ball_cli->wait_for_service(std::chrono::seconds(1))) {
         RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "service not available, waiting again...");
       }
 
       set_pen_computer_cli = this->create_client<turtlesim::srv::SetPen>("computer/set_pen");
 
-      while (!set_pen_computer_cli->wait_for_service(1s)) {
+      while(!set_pen_computer_cli->wait_for_service(std::chrono::seconds(1))) {
         RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "service not available, waiting again...");
       }
 
       set_pen_player_cli = this->create_client<turtlesim::srv::SetPen>("player/set_pen");
 
-      while (!set_pen_player_cli->wait_for_service(1s)) {
+      while(!set_pen_player_cli->wait_for_service(std::chrono::seconds(1))) {
         RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "service not available, waiting again...");
       }
 
@@ -56,7 +55,7 @@ class Game : public rclcpp::Node {
       // CONNECT WITH TELEPORT SERVICES
       teleport_cli = this->create_client<turtlesim::srv::TeleportAbsolute>("turtle1/teleport_absolute");
 
-      while (!teleport_cli->wait_for_service(1s)) {
+      while(!teleport_cli->wait_for_service(std::chrono::seconds(1))) {
         RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "service not available, waiting again...");
       }
 
@@ -74,7 +73,7 @@ class Game : public rclcpp::Node {
       move_player_turtle_sub = this->create_subscription<interfaces::msg::Move>("move_player_turtle", 10, std::bind(&Game::move_player_turtle_sub_callback, this, std::placeholders::_1));
 
       // RUN GAME LOOP FUNCTION
-      timer = this->create_wall_timer(30ms, std::bind(&Game::game_loop, this));
+      timer = this->create_wall_timer(std::chrono::seconds(1 / 30), std::bind(&Game::game_loop, this));
 
       // NOTIFY USER
       RCLCPP_INFO(this->get_logger(), "---------------------------------------------------");
@@ -87,6 +86,8 @@ class Game : public rclcpp::Node {
     // VARIABLES
     double vel_x = -2.0;
     double vel_y;
+    double tmp_x;
+    double tmp_y;
     int computer_score = 0;
     int player_score = 0;
     int direction;
@@ -117,7 +118,91 @@ class Game : public rclcpp::Node {
     
     // METHODS
     void game_loop() {
-     
+      double distance_from_computer = sqrt(pow(ball_pose.x - computer_pose.x, 2) + pow(ball_pose.y - computer_pose.y, 2));
+      double distance_from_player = sqrt(pow(ball_pose.x - player_pose.x, 2) + pow(ball_pose.y - player_pose.y, 2));
+
+      // COMPUTER TURTLE AI
+      auto computer_msg = geometry_msgs::msg::Twist();
+
+      if(ball_pose.y > computer_pose.y) {
+        computer_msg.linear.y = 2.0;
+      } else if(ball_pose.y < computer_pose.y) {
+        computer_msg.linear.y = -2.0;
+      }
+
+      computer_pose_pub->publish(computer_msg);
+
+      // MOVE PLAYER TURTLE
+      auto player_msg = geometry_msgs::msg::Twist();
+      
+      if(direction == 0) {
+        player_msg.linear.y = 0.0;
+      } else if(direction == -1) {
+        player_msg.linear.y = 2.0;
+      } else if(direction == 1) {
+        player_msg.linear.y = -2.0;
+      }
+
+      if(player_pose.y > 10.5 && player_msg.linear.y == -2.0) {
+        player_msg.linear.y = 0.0;
+      } else if(player_pose.y < 0.5 && player_msg.linear.y == 2.0) {
+        player_msg.linear.y = 0.0;
+      }
+
+      player_pose_pub->publish(player_msg);
+
+      // BOUNCE FROM TURTLES
+      if(distance_from_computer < 0.5 && computer_pose.x < ball_pose.x) {
+        if(computer_msg.linear.y == 2.0 && vel_y <= 1.5) {
+          vel_y += 0.5;
+        } else if(computer_msg.linear.y == -2.0 && vel_y >= -1.5) {
+          vel_y -= 0.5;
+        }
+        
+        vel_x = abs(vel_x);
+      } else if(distance_from_player < 0.5 && player_pose.x > ball_pose.x) { 
+        if (player_msg.linear.y == -2.0 && vel_y <= 1.5) {
+          vel_y += 0.5;
+        } else if (player_msg.linear.y == 2.0 && vel_y >= -1.5) {
+          vel_y -= 0.5;
+        }
+
+        vel_x = -abs(vel_x);
+      }
+
+      // BOUNCE FROM TOP/BOTTOM WALL
+      if(ball_pose.y > 10.5) {
+        vel_y = -abs(vel_y);
+      } else if(ball_pose.y < 1.0) {
+        vel_y = abs(vel_y);
+      }
+
+      // DETECT SCORING
+      if(ball_pose.x > 10.5) {
+        send_teleport_turtle_request();
+
+        computer_score++;
+        vel_x += 0.1;
+
+        RCLCPP_INFO(this->get_logger(), "---------------------------------------------------");
+        RCLCPP_INFO(this->get_logger(), "Computer scored.");
+        RCLCPP_INFO(this->get_logger(), "COMPUTER %d : %d PLAYER", computer_score, player_score);        
+      } else if(ball_pose.x < 1.0 && (ball_pose.x != 0.0 && ball_pose.y != 0.0)) {
+        send_teleport_turtle_request();
+
+        player_score++;
+        vel_x -= 0.1;
+
+        RCLCPP_INFO(this->get_logger(), "---------------------------------------------------");
+        RCLCPP_INFO(this->get_logger(), "Player scored.");
+        RCLCPP_INFO(this->get_logger(), "COMPUTER %d : %d PLAYER", computer_score, player_score);
+      }
+
+      // MOVE BALL
+      auto ball_msg = geometry_msgs::msg::Twist();
+      ball_msg.linear.x = vel_x;
+      ball_msg.linear.y = vel_y;
+      ball_pose_pub->publish(ball_msg);
     }
 
     void send_spawn_turtle_computer_request() {
@@ -167,12 +252,24 @@ class Game : public rclcpp::Node {
     }
 
     void send_teleport_turtle_request() {
+      auto ball_msg = geometry_msgs::msg::Twist();
+      ball_msg.linear.x = 0.0;
+      ball_msg.linear.y = 0.0;
+      ball_pose_pub->publish(ball_msg);
+
+      auto computer_msg = geometry_msgs::msg::Twist();
+      computer_msg.linear.y = 0.0;
+      computer_pose_pub->publish(computer_msg);
+
       auto request = std::make_shared<turtlesim::srv::TeleportAbsolute::Request>();
       
       request->x = 5.5;
       request->y = 5.5;
 
       teleport_cli->async_send_request(request);
+
+      ball_pose.x = 5.5;
+      ball_pose.y = 5.5;
     }
 
     void ball_pose_sub_callback(const turtlesim::msg::Pose & msg) {
